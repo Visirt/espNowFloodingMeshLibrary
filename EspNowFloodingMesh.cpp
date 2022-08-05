@@ -9,7 +9,13 @@
 #include <ESP8266WiFi.h>
 #include "AESLib.h" //From https://github.com/kakopappa/arduino-esp8266-aes-lib
 #endif
-#include "AESLib.h" //From https://github.com/kakopappa/arduino-esp8266-aes-lib
+
+
+#ifdef ESP32
+  #define TIME_T time_t
+#else
+  #define TIME_T int32_t
+#endif
 
 #ifndef USE_RAW_801_11
     #include "espnowBroadcast.h"
@@ -46,15 +52,17 @@ bool batteryNode = false;
 bool timeStampCheckDisabled = false;
 uint8_t syncTTL = 0;
 bool isespNowFloodingMeshInitialized = false;
-time_t time_fix_value;
+TIME_T time_fix_value;
 int myBsid = 0x112233;
+uint32_t myNode = 0;
 
 #pragma pack(push,1)
 struct header{
 uint8_t msgId;
 uint8_t length;
 uint32_t p1;
-time_t time;
+TIME_T time;
+uint32_t node;
 };
 
 struct mesh_secred_part{
@@ -97,14 +105,14 @@ int espNowFloodingMesh_getTTL() {
 const unsigned char broadcast_mac[] = {0xff, 0xff, 0xff, 0xff, 0xff, 0xff};
 uint8_t aes_secredKey[] = {0x00,0x11,0x22,0x33,0x44,0x55,0x66,0x77,0x88,0x99,0xAA,0xBB,0xCC,0xDD,0xEE, 0xFF};
 bool forwardMsg(const uint8_t *data, int len);
-uint32_t sendMsg(uint8_t* msg, int size, int ttl, int msgId, void *ptr=NULL);
+uint32_t sendMsg(uint8_t* msg, int size, int ttl, int msgId, void *ptr=NULL, uint32_t destNode = 0);
 void hexDump(const uint8_t*b,int len);
 static void (*espNowFloodingMesh_receive_cb)(const uint8_t *, int, uint32_t) = NULL;
 
 uint16_t calculateCRC(int c, const unsigned char*b,int len);
 uint16_t calculateCRC(struct meshFrame *m);
-int decrypt(const uint8_t *_from, struct meshFrame *m, int size);
-bool compareTime(time_t current, time_t received, time_t maxDifference);
+void decrypt(const uint8_t *_from, struct meshFrame *m, int size);
+bool compareTime(TIME_T current, TIME_T received, TIME_T maxDifference);
 
 
 
@@ -147,7 +155,7 @@ void espNowFloodingMesh_setToBatteryNode(bool isBatteryNode) {
 struct requestReplyDbItem{
     void (*cb)(const uint8_t *, int);
     uint32_t messageIdentifierCode;
-    time_t time;
+    TIME_T time;
     uint8_t ttl;
 };
 class RequestReplyDataBase{
@@ -180,7 +188,7 @@ public:
     return ret;
   }
   const struct requestReplyDbItem* getCallback(uint32_t messageIdentifierCode) {
-    time_t currentTime = espNowFloodingMesh_getRTCTime();
+    TIME_T currentTime = espNowFloodingMesh_getRTCTime();
     for(int i=0;i<REQUEST_REPLY_DATA_BASE_SIZE;i++) {
       if(db[i].messageIdentifierCode==messageIdentifierCode) {
         if(compareTime(currentTime, db[i].time, MAX_ALLOWED_TIME_DIFFERENCE_IN_MESSAGES)) {
@@ -357,7 +365,7 @@ void hexDump(const uint8_t*b,int len){
 }
 
 #ifdef ESP32
-void espNowFloodingMesh_setRTCTime(time_t time) {
+void espNowFloodingMesh_setRTCTime(TIME_T time) {
   struct timeval now = { .tv_sec = time };
   settimeofday(&now, NULL);
     if(masterFlag){
@@ -365,12 +373,12 @@ void espNowFloodingMesh_setRTCTime(time_t time) {
         sendMsg(NULL, 0, syncTTL, SYNC_TIME_MSG);
     }
 }
-time_t espNowFloodingMesh_getRTCTime() {
+TIME_T espNowFloodingMesh_getRTCTime() {
   return time(NULL);
 }
 #else
 long long rtcFixValue = 0;
-void espNowFloodingMesh_setRTCTime(time_t t) {
+void espNowFloodingMesh_setRTCTime(TIME_T t) {
   long long newTime = t;
   long long currentTime = time(NULL);
   rtcFixValue = newTime-currentTime;
@@ -380,14 +388,14 @@ void espNowFloodingMesh_setRTCTime(time_t t) {
         sendMsg(NULL, 0, syncTTL, SYNC_TIME_MSG);
     }
 }
-time_t espNowFloodingMesh_getRTCTime() {
+TIME_T espNowFloodingMesh_getRTCTime() {
   long long currentTime = time(NULL);
   long long fixedTime = currentTime + rtcFixValue;
   return fixedTime;
 }
 #endif
 
-bool compareTime(time_t current, time_t received, time_t maxDifference) {
+bool compareTime(TIME_T current, TIME_T received, TIME_T maxDifference) {
   if(timeStampCheckDisabled) {
     return true;
   }
@@ -451,7 +459,7 @@ void msg_recv_cb(const uint8_t *data, int len, uint8_t rssi)
         #endif
 
         bool messageTimeOk = true;
-        time_t currentTime = espNowFloodingMesh_getRTCTime();
+        TIME_T currentTime = espNowFloodingMesh_getRTCTime();
 
         if(crc16==crc) {
 
@@ -466,7 +474,7 @@ void msg_recv_cb(const uint8_t *data, int len, uint8_t rssi)
           if(messageStatus==0) { //if messageStatus==0 --> message is not handled yet.
             if(espNowFloodingMesh_receive_cb) {
               if( m.encrypted.header.msgId==USER_MSG) {
-                if(messageTimeOk) {
+                if(messageTimeOk && (masterFlag || m.encrypted.header.node == myNode)) {
                   espNowFloodingMesh_receive_cb(m.encrypted.data, m.encrypted.header.length, 0);
                   ok = true;
                 } else {
@@ -482,7 +490,7 @@ void msg_recv_cb(const uint8_t *data, int len, uint8_t rssi)
                   const struct requestReplyDbItem* d = requestReplyDB.getCallback(m.encrypted.header.p1);
                   if(d!=NULL){
                     d->cb(m.encrypted.data, m.encrypted.header.length);
-                  } else {
+                  } else if(masterFlag || m.encrypted.header.node == myNode){
                     espNowFloodingMesh_receive_cb(m.encrypted.data, m.encrypted.header.length, m.encrypted.header.p1);
                   }
                   ok = true;
@@ -496,7 +504,8 @@ void msg_recv_cb(const uint8_t *data, int len, uint8_t rssi)
               }
 
               if(m.encrypted.header.msgId==USER_REQUIRE_RESPONSE_MSG) {
-                if(messageTimeOk) {
+                if(messageTimeOk && (masterFlag || m.encrypted.header.node == myNode)) {
+                  espNowFloodingMesh_sendReply((uint8_t*)"ACK", 3, syncTTL, m.encrypted.header.p1);
                   espNowFloodingMesh_receive_cb(m.encrypted.data, m.encrypted.header.length, m.encrypted.header.p1);
                   ok = true;
                 } else {
@@ -523,24 +532,27 @@ void msg_recv_cb(const uint8_t *data, int len, uint8_t rssi)
                 //only slaves can be syncronized
                 return;
               }
-              static time_t last_time_sync = 0;
-              Serial.print("Last sync time:"); Serial.println(last_time_sync);
-              Serial.print("Sync time in message:"); Serial.println(m.encrypted.header.time);
+              static TIME_T last_time_sync = 0;
+
+              #ifdef DEBUG_PRINTS
+                Serial.print("Last sync time:"); Serial.println(last_time_sync);
+                Serial.print("Sync time in message:"); Serial.println(m.encrypted.header.time);
+              #endif
 
               if(last_time_sync<m.encrypted.header.time || ALLOW_TIME_ERROR_IN_SYNC_MESSAGE) {
                 ok = true;
                 last_time_sync = m.encrypted.header.time;
-              //  #ifdef DEBUG_PRINTS
+               #ifdef DEBUG_PRINTS
                 Serial.println("TIME SYNC MSG");
                 //currentTime = espNowFloodingMesh_getRTCTime();
 
                 Serial.print("Current time: "); Serial.print(asctime(localtime(&currentTime)));
-              //  #endif
+               #endif
                 espNowFloodingMesh_setRTCTime(m.encrypted.header.time);
-            //    #ifdef DEBUG_PRINTS
+               #ifdef DEBUG_PRINTS
                 currentTime = espNowFloodingMesh_getRTCTime();
                 Serial.print("    New time: "); Serial.print(asctime(localtime(&currentTime)));
-            //    #endif
+               #endif
                 syncronized = true;
                 print(3,"Time syncronised with master");
               }
@@ -584,11 +596,11 @@ void espNowFloodingMesh_end() {
 
 //   void setSendCb(function<void(void)> f)
 #ifndef USE_RAW_801_11
-void espNowFloodingMesh_begin(int channel, int bsid) {
+void espNowFloodingMesh_begin(int channel, int bsid, uint32_t nodeid) {
 #else
-void espNowFloodingMesh_begin(int channel, char bsId[6]) {
+void espNowFloodingMesh_begin(int channel, char bsId[6], uint32_t nodeid) {
 #endif
-
+  myNode = nodeid;
   #ifndef ESP32
     randomSeed(analogRead(0));
   #endif
@@ -609,7 +621,7 @@ void espNowFloodingMesh_secredkey(const unsigned char key[16]){
   memcpy(aes_secredKey, key, sizeof(aes_secredKey));
 }
 
-int decrypt(const uint8_t *_from, struct meshFrame *m, int size) {
+void decrypt(const uint8_t *_from, struct meshFrame *m, int size) {
   unsigned char iv[16];
   memcpy(iv,ivKey,sizeof(iv));
 
@@ -708,7 +720,7 @@ bool forwardMsg(const uint8_t *data, int len) {
 }
 
 
-uint32_t sendMsg(uint8_t* msg, int size, int ttl, int msgId, void *ptr) {
+uint32_t sendMsg(uint8_t* msg, int size, int ttl, int msgId, void *ptr, uint32_t destNode) {
   uint32_t ret=0;
   if(size>=sizeof(struct mesh_secred_part)) {
     #ifdef DEBUG_PRINTS
@@ -720,6 +732,10 @@ uint32_t sendMsg(uint8_t* msg, int size, int ttl, int msgId, void *ptr) {
   static struct meshFrame m;
   memset(&m,0x00,sizeof(struct meshFrame)); //fill
   m.encrypted.header.length = size;
+  if(masterFlag)
+    m.encrypted.header.node = destNode;
+  else
+    m.encrypted.header.node = myNode;
   m.unencrypted.crc16 = 0;
   m.encrypted.header.msgId = msgId;
   m.unencrypted.ttl= ttl;
@@ -779,11 +795,16 @@ void espNowFloodingMesh_sendReply(uint8_t* msg, int size, int ttl, uint32_t repl
    sendMsg(msg, size, ttl, USER_REQUIRE_REPLY_MSG, (void*)&replyIdentifier);
 }
 
-uint32_t espNowFloodingMesh_sendAndHandleReply(uint8_t* msg, int size, int ttl, void (*f)(const uint8_t *, int)) {
-  return sendMsg(msg, size, ttl, USER_REQUIRE_RESPONSE_MSG, (void*)f);
+uint32_t espNowFloodingMesh_sendAndHandleReply(uint8_t* msg, int size, int ttl, void (*f)(const uint8_t *, int), uint32_t dest) {
+  return sendMsg(msg, size, ttl, USER_REQUIRE_RESPONSE_MSG, (void*)f, dest);
 }
 
-bool espNowFloodingMesh_sendAndWaitReply(uint8_t* msg, int size, int ttl, int tryCount, void (*f)(const uint8_t *, int), int timeoutMs, int expectedCountOfReplies){
+bool espNowFloodingMesh_sendWithACK(uint8_t* msg, int size, uint32_t dest)
+{
+  return espNowFloodingMesh_sendAndWaitReply(msg, size, syncTTL, 5, [](const uint8_t *data, int size){}, 100, 1, dest);
+}
+
+bool espNowFloodingMesh_sendAndWaitReply(uint8_t* msg, int size, int ttl, int tryCount, void (*f)(const uint8_t *, int), int timeoutMs, int expectedCountOfReplies, uint32_t dest){
   static int replyCnt=0;
   static void (*callback)(const uint8_t *, int);
   callback = f;
@@ -794,7 +815,7 @@ bool espNowFloodingMesh_sendAndWaitReply(uint8_t* msg, int size, int ttl, int tr
         callback(data,len);
       }
       replyCnt++;
-    });
+    }, dest);
 
     unsigned long dbtm = millis();
 

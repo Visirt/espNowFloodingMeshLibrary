@@ -16,7 +16,7 @@
 #define MAX_ALLOWED_TIME_DIFFERENCE_IN_MESSAGES 3 //if message time differens more than this from RTC, reject message
 
     #ifndef USE_RAW_801_11
-    void espNowFloodingMesh_begin(int channel, int bsid);
+    void espNowFloodingMesh_begin(int channel, int bsid, uint32_t nodeid);
     #else
     void espNowFloodingMesh_begin(int channel, char bsId[6]);
     #endif
@@ -40,8 +40,9 @@
     uint32_t espNowFloodingMesh_sendAndHandleReply(uint8_t* msg, int size, int ttl, void (*f)(const uint8_t *, int)); //Max message length is 236byte
 
     //Run this only in Mainloop!!!
-    bool espNowFloodingMesh_sendAndWaitReply(uint8_t* msg, int size, int ttl, int tryCount=1, void (*f)(const uint8_t *, int)=NULL, int timeoutMs=3000, int expectedCountOfReplies=1); //Max message length is 236byte
+    bool espNowFloodingMesh_sendAndWaitReply(uint8_t* msg, int size, int ttl, int tryCount=1, void (*f)(const uint8_t *, int)=NULL, int timeoutMs=3000, int expectedCountOfReplies=1, uint32_t dest = 0); //Max message length is 236byte
     bool espNowFloodingMesh_syncWithMasterAndWait(int timeoutMs=3000, int tryCount=3);
+    bool espNowFloodingMesh_sendWithACK(uint8_t* msg, int size, uint32_t dest = 0);
 
     void espNowFloodingMesh_sendReply(uint8_t* msg, int size, int ttl, uint32_t replyIdentifier);
 
