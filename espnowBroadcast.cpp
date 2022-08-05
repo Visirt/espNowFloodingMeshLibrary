@@ -1,6 +1,7 @@
 #ifdef ESP32
     #include <esp_now.h>
     #include <WiFi.h>
+    #include <esp_wifi.h>
 #else
     #include <ESP8266WiFi.h>
     #include <Esp.h>
@@ -33,7 +34,6 @@ void espnowBroadcast_begin(int channel){
   WiFi.disconnect();
 
   WiFi.mode(WIFI_STA);
-
   if (esp_now_init() != 0)
   {
     return;
@@ -49,10 +49,9 @@ void espnowBroadcast_begin(int channel){
     }
     slave.channel = channel; // pick a channel
     slave.encrypt = 0; // no encryption
-
-    const esp_now_peer_info_t *peer = &slave;
-    const uint8_t *peer_addr = slave.peer_addr;
-    esp_now_add_peer(peer);
+    esp_wifi_set_ps(WIFI_PS_NONE);
+    esp_wifi_set_channel(channel, WIFI_SECOND_CHAN_NONE);
+    esp_now_add_peer(&slave);
   #else
     esp_now_set_self_role(ESP_NOW_ROLE_SLAVE);
     esp_now_add_peer((u8*)broadcast_mac, ESP_NOW_ROLE_SLAVE, channel, NULL, 0);
