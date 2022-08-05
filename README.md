@@ -1,5 +1,7 @@
 # ESPNOW flooding mesh library
 
+Visirt's provisional Fixes to the flooding mesh
+
 See example project: https://github.com/arttupii/EspNowFloodingMesh
 
 ESPNOW flooding mesh library.
