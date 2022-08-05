@@ -107,7 +107,7 @@ uint8_t aes_secredKey[] = {0x00,0x11,0x22,0x33,0x44,0x55,0x66,0x77,0x88,0x99,0xA
 bool forwardMsg(const uint8_t *data, int len);
 uint32_t sendMsg(uint8_t* msg, int size, int ttl, int msgId, void *ptr=NULL, uint32_t destNode = 0);
 void hexDump(const uint8_t*b,int len);
-static void (*espNowFloodingMesh_receive_cb)(const uint8_t *, int, uint32_t) = NULL;
+static void (*espNowFloodingMesh_receive_cb)(const uint8_t *, int, uint32_t, uint32_t) = NULL;
 
 uint16_t calculateCRC(int c, const unsigned char*b,int len);
 uint16_t calculateCRC(struct meshFrame *m);
@@ -274,7 +274,7 @@ private:
 RejectedMessageDB rejectedMessageDB;
 
 
-void espNowFloodingMesh_RecvCB(void (*callback)(const uint8_t *, int, uint32_t)){
+void espNowFloodingMesh_RecvCB(void (*callback)(const uint8_t *, int, uint32_t, uint32_t)){
   espNowFloodingMesh_receive_cb = callback;
 }
 
@@ -475,7 +475,7 @@ void msg_recv_cb(const uint8_t *data, int len, uint8_t rssi)
             if(espNowFloodingMesh_receive_cb) {
               if( m.encrypted.header.msgId==USER_MSG) {
                 if(messageTimeOk && (masterFlag || m.encrypted.header.node == myNode)) {
-                  espNowFloodingMesh_receive_cb(m.encrypted.data, m.encrypted.header.length, 0);
+                  espNowFloodingMesh_receive_cb(m.encrypted.data, m.encrypted.header.length, m.encrypted.header.node, 0);
                   ok = true;
                 } else {
                   #ifdef DEBUG_PRINTS
@@ -491,7 +491,7 @@ void msg_recv_cb(const uint8_t *data, int len, uint8_t rssi)
                   if(d!=NULL){
                     d->cb(m.encrypted.data, m.encrypted.header.length);
                   } else if(masterFlag || m.encrypted.header.node == myNode){
-                    espNowFloodingMesh_receive_cb(m.encrypted.data, m.encrypted.header.length, m.encrypted.header.p1);
+                    espNowFloodingMesh_receive_cb(m.encrypted.data, m.encrypted.header.length, m.encrypted.header.node, m.encrypted.header.p1);
                   }
                   ok = true;
                 } else {
@@ -506,7 +506,7 @@ void msg_recv_cb(const uint8_t *data, int len, uint8_t rssi)
               if(m.encrypted.header.msgId==USER_REQUIRE_RESPONSE_MSG) {
                 if(messageTimeOk && (masterFlag || m.encrypted.header.node == myNode)) {
                   espNowFloodingMesh_sendReply((uint8_t*)"ACK", 3, syncTTL, m.encrypted.header.p1);
-                  espNowFloodingMesh_receive_cb(m.encrypted.data, m.encrypted.header.length, m.encrypted.header.p1);
+                  espNowFloodingMesh_receive_cb(m.encrypted.data, m.encrypted.header.length, m.encrypted.header.node, m.encrypted.header.p1);
                   ok = true;
                 } else {
                   #ifdef DEBUG_PRINTS

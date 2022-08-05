@@ -28,7 +28,7 @@
     void espNowFloodingMesh_setToMasterRole(bool master=true, unsigned char ttl=0 /*ttl for sync messages*/);
     void espNowFloodingMesh_setToBatteryNode(bool isBatteryNode=true);
 
-    void espNowFloodingMesh_RecvCB(void (*callback)(const uint8_t *, int, uint32_t));
+    void espNowFloodingMesh_RecvCB(void (*callback)(const uint8_t *, int, uint32_t, uint32_t));
     void espNowFloodingMesh_send(uint8_t* msg, int size, int ttl=0); //Max message length is 236byte
     void espNowFloodingMesh_secredkey(const unsigned char key[16]);
     void espNowFloodingMesh_setAesInitializationVector(const unsigned char iv[16]);
