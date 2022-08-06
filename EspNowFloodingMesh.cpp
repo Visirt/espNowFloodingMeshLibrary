@@ -472,49 +472,49 @@ void msg_recv_cb(const uint8_t *data, int len, uint8_t rssi)
 
           bool ok = false;
           if(messageStatus==0) { //if messageStatus==0 --> message is not handled yet.
-            if(espNowFloodingMesh_receive_cb) {
-              if( m.encrypted.header.msgId==USER_MSG) {
-                if(messageTimeOk && (masterFlag || m.encrypted.header.node == myNode)) {
+            if( m.encrypted.header.msgId==USER_MSG) {
+              if(messageTimeOk && (masterFlag || m.encrypted.header.node == myNode)) {
+                if(espNowFloodingMesh_receive_cb)
                   espNowFloodingMesh_receive_cb(m.encrypted.data, m.encrypted.header.length, m.encrypted.header.node, 0);
-                  ok = true;
-                } else {
-                  #ifdef DEBUG_PRINTS
-                  Serial.print("Reject message because of time difference:");Serial.print(currentTime);Serial.print(" ");Serial.println(m.encrypted.header.time);
-                  hexDump((uint8_t*)&m,  messageLengtWithHeader);
-                  #endif
-                }
+                ok = true;
+              } else {
+                #ifdef DEBUG_PRINTS
+                Serial.print("Reject message because of time difference:");Serial.print(currentTime);Serial.print(" ");Serial.println(m.encrypted.header.time);
+                hexDump((uint8_t*)&m,  messageLengtWithHeader);
+                #endif
               }
-
-              if( m.encrypted.header.msgId==USER_REQUIRE_REPLY_MSG) {
-                if(messageTimeOk) {
-                  const struct requestReplyDbItem* d = requestReplyDB.getCallback(m.encrypted.header.p1);
-                  if(d!=NULL){
-                    d->cb(m.encrypted.data, m.encrypted.header.length);
-                  } else if(masterFlag || m.encrypted.header.node == myNode){
+            }
+            
+            if( m.encrypted.header.msgId==USER_REQUIRE_REPLY_MSG) {
+              if(messageTimeOk) {
+                const struct requestReplyDbItem* d = requestReplyDB.getCallback(m.encrypted.header.p1);
+                if(d!=NULL){
+                  d->cb(m.encrypted.data, m.encrypted.header.length);
+                } else if(masterFlag || m.encrypted.header.node == myNode){
+                  if(espNowFloodingMesh_receive_cb)
                     espNowFloodingMesh_receive_cb(m.encrypted.data, m.encrypted.header.length, m.encrypted.header.node, m.encrypted.header.p1);
-                  }
-                  ok = true;
-                } else {
-                  #ifdef DEBUG_PRINTS
-                  Serial.print("Reject message because of time difference:");Serial.print(currentTime);Serial.print(" ");Serial.println(m.encrypted.header.time);
-                  hexDump((uint8_t*)&m,  messageLengtWithHeader);
-                  #endif
-                  print(1,"Message rejected because of time difference.");
                 }
+                ok = true;
+              } else {
+                #ifdef DEBUG_PRINTS
+                Serial.print("Reject message because of time difference:");Serial.print(currentTime);Serial.print(" ");Serial.println(m.encrypted.header.time);
+                hexDump((uint8_t*)&m,  messageLengtWithHeader);
+                #endif
+                print(1,"Message rejected because of time difference.");
               }
-
-              if(m.encrypted.header.msgId==USER_REQUIRE_RESPONSE_MSG) {
-                if(messageTimeOk && (masterFlag || m.encrypted.header.node == myNode)) {
-                  espNowFloodingMesh_sendReply((uint8_t*)"ACK", 3, syncTTL, m.encrypted.header.p1);
+            }
+            if(m.encrypted.header.msgId==USER_REQUIRE_RESPONSE_MSG) {
+              if(messageTimeOk && (masterFlag || m.encrypted.header.node == myNode)) {
+                espNowFloodingMesh_sendReply((uint8_t*)"ACK", 3, syncTTL, m.encrypted.header.p1);
+                if(espNowFloodingMesh_receive_cb)
                   espNowFloodingMesh_receive_cb(m.encrypted.data, m.encrypted.header.length, m.encrypted.header.node, m.encrypted.header.p1);
-                  ok = true;
-                } else {
-                  #ifdef DEBUG_PRINTS
-                  Serial.print("Reject message because of time difference:");Serial.print(currentTime);Serial.print(" ");Serial.println(m.encrypted.header.time);
-                  hexDump((uint8_t*)&m,  messageLengtWithHeader);
-                  #endif
-                  print(1,"Message rejected because of time difference.");
-                }
+                ok = true;
+              } else {
+                #ifdef DEBUG_PRINTS
+                Serial.print("Reject message because of time difference:");Serial.print(currentTime);Serial.print(" ");Serial.println(m.encrypted.header.time);
+                hexDump((uint8_t*)&m,  messageLengtWithHeader);
+                #endif
+                print(1,"Message rejected because of time difference.");
               }
             }
             if(m.encrypted.header.msgId==INSTANT_TIME_SYNC_REQ) {
