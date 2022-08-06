@@ -600,7 +600,7 @@ uint64_t StringToInt(String node)
     return 0;
   for(char c : node)
     res = (res << 8) + c;
-  return res
+  return res;
 }
 
 
