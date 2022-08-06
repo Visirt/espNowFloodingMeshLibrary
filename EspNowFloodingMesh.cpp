@@ -54,7 +54,7 @@ uint8_t syncTTL = 0;
 bool isespNowFloodingMeshInitialized = false;
 TIME_T time_fix_value;
 int myBsid = 0x112233;
-uint32_t myNode = 0;
+uint64_t myNode = 0;
 
 #pragma pack(push,1)
 struct header{
@@ -62,7 +62,7 @@ uint8_t msgId;
 uint8_t length;
 uint32_t p1;
 TIME_T time;
-uint32_t node;
+uint64_t node;
 };
 
 struct mesh_secred_part{
@@ -105,9 +105,9 @@ int espNowFloodingMesh_getTTL() {
 const unsigned char broadcast_mac[] = {0xff, 0xff, 0xff, 0xff, 0xff, 0xff};
 uint8_t aes_secredKey[] = {0x00,0x11,0x22,0x33,0x44,0x55,0x66,0x77,0x88,0x99,0xAA,0xBB,0xCC,0xDD,0xEE, 0xFF};
 bool forwardMsg(const uint8_t *data, int len);
-uint32_t sendMsg(uint8_t* msg, int size, int ttl, int msgId, void *ptr=NULL, uint32_t destNode = 0);
+uint32_t sendMsg(uint8_t* msg, int size, int ttl, int msgId, void *ptr=NULL, uint64_t destNode = 0);
 void hexDump(const uint8_t*b,int len);
-static void (*espNowFloodingMesh_receive_cb)(const uint8_t *, int, uint32_t, uint32_t) = NULL;
+static void (*espNowFloodingMesh_receive_cb)(const uint8_t *, int, uint64_t, uint32_t) = NULL;
 
 uint16_t calculateCRC(int c, const unsigned char*b,int len);
 uint16_t calculateCRC(struct meshFrame *m);
@@ -274,7 +274,7 @@ private:
 RejectedMessageDB rejectedMessageDB;
 
 
-void espNowFloodingMesh_RecvCB(void (*callback)(const uint8_t *, int, uint32_t, uint32_t)){
+void espNowFloodingMesh_RecvCB(void (*callback)(const uint8_t *, int, uint64_t, uint32_t)){
   espNowFloodingMesh_receive_cb = callback;
 }
 
@@ -593,14 +593,24 @@ void espNowFloodingMesh_requestInstantTimeSyncFromMaster() {
 void espNowFloodingMesh_end() {
 }
 
+uint64_t StringToInt(String node)
+{
+  uint64_t res = 0;
+  if(node.length() > 8)
+    return 0;
+  for(char c : node)
+    res = (res << 8) + c;
+  return res
+}
+
 
 //   void setSendCb(function<void(void)> f)
 #ifndef USE_RAW_801_11
-void espNowFloodingMesh_begin(int channel, int bsid, uint32_t nodeid) {
+void espNowFloodingMesh_begin(int channel, int bsid, String nodeid) {
 #else
-void espNowFloodingMesh_begin(int channel, char bsId[6], uint32_t nodeid) {
+void espNowFloodingMesh_begin(int channel, char bsId[6], String nodeid) {
 #endif
-  myNode = nodeid;
+  myNode = StringToInt(nodeid);
   #ifndef ESP32
     randomSeed(analogRead(0));
   #endif
@@ -720,7 +730,7 @@ bool forwardMsg(const uint8_t *data, int len) {
 }
 
 
-uint32_t sendMsg(uint8_t* msg, int size, int ttl, int msgId, void *ptr, uint32_t destNode) {
+uint32_t sendMsg(uint8_t* msg, int size, int ttl, int msgId, void *ptr, uint64_t destNode) {
   uint32_t ret=0;
   if(size>=sizeof(struct mesh_secred_part)) {
     #ifdef DEBUG_PRINTS
@@ -795,16 +805,16 @@ void espNowFloodingMesh_sendReply(uint8_t* msg, int size, int ttl, uint32_t repl
    sendMsg(msg, size, ttl, USER_REQUIRE_REPLY_MSG, (void*)&replyIdentifier);
 }
 
-uint32_t espNowFloodingMesh_sendAndHandleReply(uint8_t* msg, int size, int ttl, void (*f)(const uint8_t *, int), uint32_t dest) {
+uint32_t espNowFloodingMesh_sendAndHandleReply(uint8_t* msg, int size, int ttl, void (*f)(const uint8_t *, int), uint64_t dest) {
   return sendMsg(msg, size, ttl, USER_REQUIRE_RESPONSE_MSG, (void*)f, dest);
 }
 
-bool espNowFloodingMesh_sendWithACK(uint8_t* msg, int size, uint32_t dest)
+bool espNowFloodingMesh_sendWithACK(uint8_t* msg, int size, String dest)
 {
-  return espNowFloodingMesh_sendAndWaitReply(msg, size, syncTTL, 5, [](const uint8_t *data, int size){}, 100, 1, dest);
+  return espNowFloodingMesh_sendAndWaitReply(msg, size, syncTTL, 5, [](const uint8_t *data, int size){}, 100, 1, StringToInt(dest));
 }
 
-bool espNowFloodingMesh_sendAndWaitReply(uint8_t* msg, int size, int ttl, int tryCount, void (*f)(const uint8_t *, int), int timeoutMs, int expectedCountOfReplies, uint32_t dest){
+bool espNowFloodingMesh_sendAndWaitReply(uint8_t* msg, int size, int ttl, int tryCount, void (*f)(const uint8_t *, int), int timeoutMs, int expectedCountOfReplies, uint64_t dest){
   static int replyCnt=0;
   static void (*callback)(const uint8_t *, int);
   callback = f;
