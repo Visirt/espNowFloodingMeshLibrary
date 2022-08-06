@@ -396,7 +396,7 @@ TIME_T espNowFloodingMesh_getRTCTime() {
 #endif
 
 bool compareTime(TIME_T current, TIME_T received, TIME_T maxDifference) {
-  if(timeStampCheckDisabled) {
+  if(true) {
     return true;
   }
 
