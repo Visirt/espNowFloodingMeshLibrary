@@ -1,8 +1,6 @@
 #ifdef ESP32
-  #ifndef USE_RAW_801_11
-    #include <esp_now.h>
-    #include <WiFi.h>
-  #endif
+  #include <esp_now.h>
+  #include <WiFi.h>
   #include <rom/crc.h>
   #include "mbedtls/aes.h"
 #else
@@ -10,36 +8,15 @@
 #include "AESLib.h" //From https://github.com/kakopappa/arduino-esp8266-aes-lib
 #endif
 
-
-#ifdef ESP32
-  #define TIME_T time_t
-#else
-  #define TIME_T int32_t
-#endif
-
-#ifndef USE_RAW_801_11
-    #include "espnowBroadcast.h"
-#endif
+#include "espnowBroadcast.h"
 #include "EspNowFloodingMesh.h"
-#include <time.h>
-
-#ifdef USE_RAW_801_11
-#include "wifi802_11.h"
-#endif
 
 #define AES_BLOCK_SIZE  16
 #define DISPOSABLE_KEY_LENGTH AES_BLOCK_SIZE
 #define REJECTED_LIST_SIZE 50
 #define REQUEST_REPLY_DATA_BASE_SIZE 20
 
-#define ALLOW_TIME_ERROR_IN_SYNC_MESSAGE false //Decrease secure. false=Validate sync messages against own RTC time
-
-
-#define RESEND_SYNC_TIME_MS 10000
-
 #define USER_MSG 1
-#define SYNC_TIME_MSG 2
-#define INSTANT_TIME_SYNC_REQ 3
 #define USER_REQUIRE_RESPONSE_MSG 4
 #define USER_REQUIRE_REPLY_MSG 5
 
@@ -49,10 +26,8 @@ unsigned char ivKey[16] = {0xb2, 0x4b, 0xf2, 0xf7, 0x7a, 0xc5, 0xec, 0x0c, 0x5e,
 bool masterFlag = false;
 bool syncronized = false;
 bool batteryNode = false;
-bool timeStampCheckDisabled = false;
 uint8_t syncTTL = 0;
 bool isespNowFloodingMeshInitialized = false;
-TIME_T time_fix_value;
 int myBsid = 0x112233;
 uint64_t myNode = 0;
 
@@ -61,7 +36,6 @@ struct header{
 uint8_t msgId;
 uint8_t length;
 uint32_t p1;
-TIME_T time;
 uint64_t node;
 };
 
@@ -112,9 +86,6 @@ static void (*espNowFloodingMesh_receive_cb)(const uint8_t *, int, uint64_t, uin
 uint16_t calculateCRC(int c, const unsigned char*b,int len);
 uint16_t calculateCRC(struct meshFrame *m);
 void decrypt(const uint8_t *_from, struct meshFrame *m, int size);
-bool compareTime(TIME_T current, TIME_T received, TIME_T maxDifference);
-
-
 
 void (*errorPrintCB)(int,const char *) = NULL;
 
@@ -122,12 +93,6 @@ void espNowFloodingMesh_ErrorDebugCB(void (*callback)(int, const char *)){
     errorPrintCB = callback;
 }
 
-void espNowFloodingMesh_disableTimeDifferenceCheck(bool disable) {
-    timeStampCheckDisabled = disable;
-    if(disable) {
-        syncronized = true;
-    }
-}
 void print(int level, const char * format, ... )
 {
 
@@ -155,7 +120,6 @@ void espNowFloodingMesh_setToBatteryNode(bool isBatteryNode) {
 struct requestReplyDbItem{
     void (*cb)(const uint8_t *, int);
     uint32_t messageIdentifierCode;
-    TIME_T time;
     uint8_t ttl;
 };
 class RequestReplyDataBase{
@@ -169,7 +133,6 @@ public:
   void add(uint32_t messageIdentifierCode, void (*f)(const uint8_t *, int)) {
     db[index].cb = f;
     db[index].messageIdentifierCode = messageIdentifierCode;
-    db[index].time = espNowFloodingMesh_getRTCTime();
     index++;
     if(index>=REQUEST_REPLY_DATA_BASE_SIZE) {
       index = 0;
@@ -188,13 +151,10 @@ public:
     return ret;
   }
   const struct requestReplyDbItem* getCallback(uint32_t messageIdentifierCode) {
-    TIME_T currentTime = espNowFloodingMesh_getRTCTime();
     for(int i=0;i<REQUEST_REPLY_DATA_BASE_SIZE;i++) {
       if(db[i].messageIdentifierCode==messageIdentifierCode) {
-        if(compareTime(currentTime, db[i].time, MAX_ALLOWED_TIME_DIFFERENCE_IN_MESSAGES)) {
-            if(db[i].cb!=NULL) {
-              return &db[i];
-            }
+        if(db[i].cb!=NULL) {
+          return &db[i];
         }
       }
     }
@@ -287,27 +247,15 @@ void espNowFloodingMesh_delay(unsigned long tm) {
 
 void espNowFloodingMesh_loop(){
   if(isespNowFloodingMeshInitialized==false) return;
-  if(masterFlag) {
-      static unsigned long start = 0;
-      unsigned long elapsed = millis()-start;
-      if(elapsed>=RESEND_SYNC_TIME_MS) { //10s
-        start = millis();
-        #ifdef DEBUG_PRINTS
-        Serial.println("Send time sync message!!");
-        #endif
-        print(3,"Send time sync message.");
-        sendMsg(NULL, 0, syncTTL, SYNC_TIME_MSG);
-      }
+   //Clean data base
+  static unsigned long dbtm = millis();
+  unsigned long elapsed = millis()-dbtm;
+  if(elapsed>=500) {
+    dbtm = millis();
+    requestReplyDB.removeItem();
+    rejectedMessageDB.removeItem();
   }
-  { //Clean data base
-    static unsigned long dbtm = millis();
-    unsigned long elapsed = millis()-dbtm;
-    if(elapsed>=500) {
-      dbtm = millis();
-      requestReplyDB.removeItem();
-      rejectedMessageDB.removeItem();
-    }
-  }
+  
   delay(1);
 }
 void espNowFloodingMesh_setToMasterRole(bool master, unsigned char ttl){
@@ -364,56 +312,7 @@ void hexDump(const uint8_t*b,int len){
 //  #endif
 }
 
-#ifdef ESP32
-void espNowFloodingMesh_setRTCTime(TIME_T time) {
-  struct timeval now = { .tv_sec = time };
-  settimeofday(&now, NULL);
-    if(masterFlag){
-        print(3, "Send time sync");
-        sendMsg(NULL, 0, syncTTL, SYNC_TIME_MSG);
-    }
-}
-TIME_T espNowFloodingMesh_getRTCTime() {
-  return time(NULL);
-}
-#else
-long long rtcFixValue = 0;
-void espNowFloodingMesh_setRTCTime(TIME_T t) {
-  long long newTime = t;
-  long long currentTime = time(NULL);
-  rtcFixValue = newTime-currentTime;
-
-    if(masterFlag){
-        print(3, "Send time sync");
-        sendMsg(NULL, 0, syncTTL, SYNC_TIME_MSG);
-    }
-}
-TIME_T espNowFloodingMesh_getRTCTime() {
-  long long currentTime = time(NULL);
-  long long fixedTime = currentTime + rtcFixValue;
-  return fixedTime;
-}
-#endif
-
-bool compareTime(TIME_T current, TIME_T received, TIME_T maxDifference) {
-  if(true) {
-    return true;
-  }
-
-  if(current==received) return true;
-  if(current<received) {
-    return ((received-current) <= maxDifference);
-  } else {
-    return ((current-received) <= maxDifference);
-  }
-  return false;
-}
-
-#ifdef USE_RAW_801_11
-void msg_recv_cb(const uint8_t *data, int len, uint8_t rssi)
-#else
-  void msg_recv_cb(const uint8_t *data, int len)
-#endif
+void msg_recv_cb(const uint8_t *data, int len)
 {
   #ifdef DEBUG_PRINTS
   Serial.print("REC[RAW]:");
@@ -443,8 +342,7 @@ void msg_recv_cb(const uint8_t *data, int len, uint8_t rssi)
     Serial.print("REC:");
     hexDump((uint8_t*)&m,m.encrypted.header.length + sizeof(m.encrypted.header)+3);
 #endif
-    if(!(m.encrypted.header.msgId==USER_MSG||m.encrypted.header.msgId==SYNC_TIME_MSG||m.encrypted.header.msgId==INSTANT_TIME_SYNC_REQ
-      ||m.encrypted.header.msgId==USER_REQUIRE_RESPONSE_MSG||m.encrypted.header.msgId==USER_REQUIRE_REPLY_MSG)) {
+    if(!(m.encrypted.header.msgId==USER_MSG||m.encrypted.header.msgId==USER_REQUIRE_RESPONSE_MSG||m.encrypted.header.msgId==USER_REQUIRE_REPLY_MSG)) {
         //Quick wilter;
         return;
     }
@@ -458,103 +356,45 @@ void msg_recv_cb(const uint8_t *data, int len, uint8_t rssi)
         hexDump((uint8_t*)&m,messageLengtWithHeader);
         #endif
 
-        bool messageTimeOk = true;
-        TIME_T currentTime = espNowFloodingMesh_getRTCTime();
-
         if(crc16==crc) {
-
-          if(!compareTime(currentTime,m.encrypted.header.time, MAX_ALLOWED_TIME_DIFFERENCE_IN_MESSAGES)) {
-              messageTimeOk = false;
-              print(1,"Received message with invalid time stamp.");
-            //  Serial.print("CurrentTime:");Serial.println(currentTime);
-            //  Serial.print("ReceivedTime:");Serial.println(m.encrypted.header.time);
-          }
 
           bool ok = false;
           if(messageStatus==0) { //if messageStatus==0 --> message is not handled yet.
             if( m.encrypted.header.msgId==USER_MSG) {
-              if(messageTimeOk && (masterFlag || m.encrypted.header.node == myNode)) {
+              if(masterFlag || m.encrypted.header.node == myNode) {
                 if(espNowFloodingMesh_receive_cb)
                   espNowFloodingMesh_receive_cb(m.encrypted.data, m.encrypted.header.length, m.encrypted.header.node, 0);
                 ok = true;
               } else {
                 #ifdef DEBUG_PRINTS
-                Serial.print("Reject message because of time difference:");Serial.print(currentTime);Serial.print(" ");Serial.println(m.encrypted.header.time);
+                Serial.println("Reject message:");
                 hexDump((uint8_t*)&m,  messageLengtWithHeader);
                 #endif
               }
             }
             
             if( m.encrypted.header.msgId==USER_REQUIRE_REPLY_MSG) {
-              if(messageTimeOk) {
-                const struct requestReplyDbItem* d = requestReplyDB.getCallback(m.encrypted.header.p1);
-                if(d!=NULL){
-                  d->cb(m.encrypted.data, m.encrypted.header.length);
-                } else if(masterFlag || m.encrypted.header.node == myNode){
-                  if(espNowFloodingMesh_receive_cb)
-                    espNowFloodingMesh_receive_cb(m.encrypted.data, m.encrypted.header.length, m.encrypted.header.node, m.encrypted.header.p1);
-                }
-                ok = true;
-              } else {
-                #ifdef DEBUG_PRINTS
-                Serial.print("Reject message because of time difference:");Serial.print(currentTime);Serial.print(" ");Serial.println(m.encrypted.header.time);
-                hexDump((uint8_t*)&m,  messageLengtWithHeader);
-                #endif
-                print(1,"Message rejected because of time difference.");
+              const struct requestReplyDbItem* d = requestReplyDB.getCallback(m.encrypted.header.p1);
+              if(d!=NULL){
+                d->cb(m.encrypted.data, m.encrypted.header.length);
+              } else if(masterFlag || m.encrypted.header.node == myNode){
+                if(espNowFloodingMesh_receive_cb)
+                  espNowFloodingMesh_receive_cb(m.encrypted.data, m.encrypted.header.length, m.encrypted.header.node, m.encrypted.header.p1);
               }
+                ok = true;
             }
             if(m.encrypted.header.msgId==USER_REQUIRE_RESPONSE_MSG) {
-              if(messageTimeOk && (masterFlag || m.encrypted.header.node == myNode)) {
+              if(masterFlag || m.encrypted.header.node == myNode) {
                 espNowFloodingMesh_sendReply((uint8_t*)"ACK", 3, syncTTL, m.encrypted.header.p1);
                 if(espNowFloodingMesh_receive_cb)
                   espNowFloodingMesh_receive_cb(m.encrypted.data, m.encrypted.header.length, m.encrypted.header.node, m.encrypted.header.p1);
                 ok = true;
               } else {
                 #ifdef DEBUG_PRINTS
-                Serial.print("Reject message because of time difference:");Serial.print(currentTime);Serial.print(" ");Serial.println(m.encrypted.header.time);
+                Serial.print("Reject message:");
                 hexDump((uint8_t*)&m,  messageLengtWithHeader);
                 #endif
-                print(1,"Message rejected because of time difference.");
-              }
-            }
-            if(m.encrypted.header.msgId==INSTANT_TIME_SYNC_REQ) {
-              ok = true;
-              if(masterFlag) {
-                #ifdef DEBUG_PRINTS
-                Serial.println("Send time sync message!! (Requested)");
-                #endif
-                sendMsg(NULL, 0, syncTTL, SYNC_TIME_MSG);
-                //print(3,"Send time sync message!! (Requested)");
-              }
-            }
-            if(m.encrypted.header.msgId==SYNC_TIME_MSG) {
-              if(masterFlag) {
-                //only slaves can be syncronized
-                return;
-              }
-              static TIME_T last_time_sync = 0;
-
-              #ifdef DEBUG_PRINTS
-                Serial.print("Last sync time:"); Serial.println(last_time_sync);
-                Serial.print("Sync time in message:"); Serial.println(m.encrypted.header.time);
-              #endif
-
-              if(last_time_sync<m.encrypted.header.time || ALLOW_TIME_ERROR_IN_SYNC_MESSAGE) {
-                ok = true;
-                last_time_sync = m.encrypted.header.time;
-               #ifdef DEBUG_PRINTS
-                Serial.println("TIME SYNC MSG");
-                //currentTime = espNowFloodingMesh_getRTCTime();
-
-                Serial.print("Current time: "); Serial.print(asctime(localtime(&currentTime)));
-               #endif
-                espNowFloodingMesh_setRTCTime(m.encrypted.header.time);
-               #ifdef DEBUG_PRINTS
-                currentTime = espNowFloodingMesh_getRTCTime();
-                Serial.print("    New time: "); Serial.print(asctime(localtime(&currentTime)));
-               #endif
-                syncronized = true;
-                print(3,"Time syncronised with master");
+                print(1,"Message rejected.");
               }
             }
         }
@@ -582,13 +422,6 @@ void msg_recv_cb(const uint8_t *data, int len, uint8_t rssi)
       #endif
     }
 }
-void espNowFloodingMesh_requestInstantTimeSyncFromMaster() {
-  if(masterFlag) return;
-  #ifdef DEBUG_PRINTS
-  Serial.println("Request instant time sync from master.");
-  #endif
-  sendMsg(NULL, 0, 0, INSTANT_TIME_SYNC_REQ);
-}
 
 void espNowFloodingMesh_end() {
 }
@@ -605,23 +438,15 @@ uint64_t StringToInt(String node)
 
 
 //   void setSendCb(function<void(void)> f)
-#ifndef USE_RAW_801_11
 void espNowFloodingMesh_begin(int channel, int bsid, String nodeid) {
-#else
-void espNowFloodingMesh_begin(int channel, char bsId[6], String nodeid) {
-#endif
   myNode = StringToInt(nodeid);
   #ifndef ESP32
     randomSeed(analogRead(0));
   #endif
 
-  #ifndef USE_RAW_801_11
-      espnowBroadcast_cb(msg_recv_cb);
-      espnowBroadcast_begin(channel);
-  #else
-        wifi_802_11_begin(bsId, channel);
-        wifi_802_receive_cb(msg_recv_cb);
-  #endif
+  espnowBroadcast_cb(msg_recv_cb);
+  espnowBroadcast_begin(channel);
+
   isespNowFloodingMeshInitialized=true;
 
   myBsid = bsid;
@@ -721,11 +546,8 @@ bool forwardMsg(const uint8_t *data, int len) {
   hexDump((const uint8_t*)data, len);
   #endif
 
-  #ifdef USE_RAW_801_11
-      wifi_802_11_send((uint8_t*)(&m), len);
-  #else
-      espnowBroadcast_send((uint8_t*)(&m), len);
-  #endif
+  espnowBroadcast_send((uint8_t*)(&m), len);
+
   return true;
 }
 
@@ -751,7 +573,6 @@ uint32_t sendMsg(uint8_t* msg, int size, int ttl, int msgId, void *ptr, uint64_t
   m.unencrypted.ttl= ttl;
   m.unencrypted.setBsid(myBsid);
   m.encrypted.header.p1 = requestReplyDB.calculateMessageIdentifier();
-  m.encrypted.header.time = espNowFloodingMesh_getRTCTime();
 
   if(msg!=NULL){
     memcpy(m.encrypted.data, msg, size);
@@ -788,12 +609,8 @@ Serial.print("--->:");
     Serial.print("Send[RAW]:");
     hexDump((const uint8_t*)&m, sendSize);
   #endif
-
-  #ifdef USE_RAW_801_11
-      wifi_802_11_send((uint8_t*)&m, sendSize);
-  #else
-      espnowBroadcast_send((uint8_t*)&m, sendSize);
-  #endif
+  
+  espnowBroadcast_send((uint8_t*)&m, sendSize);
   return ret;
 }
 
@@ -842,28 +659,6 @@ bool espNowFloodingMesh_sendAndWaitReply(uint8_t* msg, int size, int ttl, int tr
         break;
       }
     }
-  }
-  return false;
-}
-
-bool espNowFloodingMesh_syncWithMasterAndWait(int timeoutMs, int tryCount) {
-  if(masterFlag || timeStampCheckDisabled) return true;
-  syncronized = false;
-  for(int i=0;i<tryCount;i++) {
-      unsigned long dbtm = millis();
-      espNowFloodingMesh_requestInstantTimeSyncFromMaster();
-
-      while(1) {
-        espNowFloodingMesh_loop();
-        delay(10);
-        if(syncronized) {
-          return true; //OK all received;
-        }
-        unsigned long elapsed = millis()-dbtm;
-        if(elapsed>timeoutMs) {
-          break;
-        }
-      }
   }
   return false;
 }

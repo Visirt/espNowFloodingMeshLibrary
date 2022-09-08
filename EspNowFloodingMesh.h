@@ -1,25 +1,10 @@
 #ifndef ESP_NOBRADCAST_H
 #define ESP_NOBRADCAST_H
 
-//#define USE_RAW_801_11
-
-#ifndef USE_RAW_801_11
-  #ifdef ESP32
-//  #include <esp_now.h>
-  #else
-//W  #include <espnow.h>
-  #endif
-#endif
 
 //#define DISABLE_CRYPTING //send messages as plain text
 //#define DEBUG_PRINTS
-#define MAX_ALLOWED_TIME_DIFFERENCE_IN_MESSAGES 3 //if message time differens more than this from RTC, reject message
-
-    #ifndef USE_RAW_801_11
     void espNowFloodingMesh_begin(int channel, int bsid, String nodeid);
-    #else
-    void espNowFloodingMesh_begin(int channel, char bsId[6], String nodeid);
-    #endif
 
     void espNowFloodingMesh_end();
 
@@ -35,13 +20,11 @@
 
     void espNowFloodingMesh_ErrorDebugCB(void (*callback)(int,const char *));
 
-    void espNowFloodingMesh_disableTimeDifferenceCheck(bool disable=true); //Decreases security, but you can communicate without master and without timesync
 
     uint32_t espNowFloodingMesh_sendAndHandleReply(uint8_t* msg, int size, int ttl, void (*f)(const uint8_t *, int)); //Max message length is 236byte
 
     //Run this only in Mainloop!!!
     bool espNowFloodingMesh_sendAndWaitReply(uint8_t* msg, int size, int ttl, int tryCount=1, void (*f)(const uint8_t *, int)=NULL, int timeoutMs=3000, int expectedCountOfReplies=1, uint64_t dest = 0); //Max message length is 236byte
-    bool espNowFloodingMesh_syncWithMasterAndWait(int timeoutMs=3000, int tryCount=3);
     bool espNowFloodingMesh_sendWithACK(uint8_t* msg, int size, String dest);
 
     void espNowFloodingMesh_sendReply(uint8_t* msg, int size, int ttl, uint32_t replyIdentifier);
@@ -51,6 +34,4 @@
     void espNowFloodingMesh_delay(unsigned long tm);
     int espNowFloodingMesh_getTTL();
 
-    void espNowFloodingMesh_setRTCTime(time_t time);
-    time_t espNowFloodingMesh_getRTCTime();
 #endif
